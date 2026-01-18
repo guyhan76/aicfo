@@ -1,5 +1,11 @@
 # AICFO - Financial Intelligence Infrastructure
 
+🚀 **[Live Demo](https://aicfo-rl5drpex2-guyhan76s-projects.vercel.app)** ⭐
+
+> ChatGPT answers questions; AICFO watches companies.
+
+# AICFO - Financial Intelligence Infrastructure
+
 ![AICFO Banner](https://via.placeholder.com/1200x300/3B82F6/FFFFFF?text=AICFO+-+Financial+Intelligence+Infrastructure)
 
 ## 🎯 Vision

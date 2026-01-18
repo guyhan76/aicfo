@@ -1,0 +1,324 @@
+// This is your Prisma schema file
+// Learn more: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ============================================
+// USER & AUTH (Supabase handles this)
+// ============================================
+
+// ============================================
+// COMPANIES
+// ============================================
+
+model Company {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  
+  // Basic info
+  name      String
+  isPublic  Boolean  @default(false) @map("is_public")
+  
+  // Public company data
+  tickerSymbol String? @map("ticker_symbol")
+  cik         String?  @unique
+  sector      String?
+  industry    String?
+  
+  // Accounting settings
+  accountingStandard String @default("US_GAAP") @map("accounting_standard")
+  fiscalYearEnd     String? @map("fiscal_year_end") // "12-31"
+  currency          String @default("USD")
+  
+  // Sync status
+  lastSyncedAt DateTime? @map("last_synced_at")
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  periods   FinancialPeriod[]
+  actions   Action[]
+  accessTokens ExternalAccessToken[]
+  
+  @@map("companies")
+}
+
+// ============================================
+// FINANCIAL PERIODS
+// ============================================
+
+model FinancialPeriod {
+  id        String   @id @default(uuid())
+  companyId String   @map("company_id")
+  
+  // Period info
+  periodType    String  @map("period_type") // 'quarterly', 'annual'
+  fiscalYear    Int     @map("fiscal_year")
+  fiscalQuarter Int?    @map("fiscal_quarter") // 1, 2, 3, 4
+  
+  // Date range
+  startDate DateTime @map("start_date")
+  endDate   DateTime @map("end_date")
+  
+  // Filing info
+  filingDate DateTime? @map("filing_date")
+  filingUrl  String?   @map("filing_url")
+  
+  // Data source
+  dataSource String @default("manual") @map("data_source") // 'manual', 'sec_edgar', 'api'
+  isAudited  Boolean @default(false) @map("is_audited")
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  company         Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  accountBalances AccountBalance[]
+  statements      FinancialStatement[]
+  riskDetections  RiskDetection[]
+  
+  @@unique([companyId, fiscalYear, fiscalQuarter])
+  @@map("financial_periods")
+}
+
+// ============================================
+// ACCOUNT BALANCES
+// ============================================
+
+model AccountBalance {
+  id       String @id @default(uuid())
+  periodId String @map("period_id")
+  
+  // Account info
+  accountCategory      String  @map("account_category") // 'asset', 'liability', 'equity', 'revenue', 'expense'
+  accountCode         String? @map("account_code")
+  accountNameStandard String  @map("account_name_standard")
+  accountNameOriginal String? @map("account_name_original")
+  
+  // Amount
+  amount Decimal @db.Decimal(20, 2)
+  
+  // Hierarchy
+  parentAccountId String? @map("parent_account_id")
+  
+  // Timestamp
+  createdAt DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  period        FinancialPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  parentAccount AccountBalance? @relation("AccountHierarchy", fields: [parentAccountId], references: [id])
+  childAccounts AccountBalance[] @relation("AccountHierarchy")
+  
+  @@index([periodId])
+  @@index([accountCategory])
+  @@map("account_balances")
+}
+
+// ============================================
+// FINANCIAL STATEMENTS
+// ============================================
+
+model FinancialStatement {
+  id       String @id @default(uuid())
+  periodId String @map("period_id")
+  
+  // Statement type
+  statementType String @map("statement_type") // 'balance_sheet', 'income_statement', 'cash_flow'
+  
+  // Line item
+  lineItemCode String @map("line_item_code")
+  lineItemName String @map("line_item_name")
+  amount       Decimal @db.Decimal(20, 2)
+  
+  // Hierarchy
+  parentLineItem String? @map("parent_line_item")
+  displayOrder   Int?    @map("display_order")
+  
+  // Timestamp
+  createdAt DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  period FinancialPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  
+  @@index([periodId, statementType])
+  @@map("financial_statements")
+}
+
+// ============================================
+// RISK RULES
+// ============================================
+
+model RiskRule {
+  id   String @id @default(uuid())
+  
+  // Rule info
+  code        String @unique
+  name        String
+  description String?
+  category    String // 'liquidity', 'profitability', 'leverage', 'operational'
+  
+  // Threshold config (JSON)
+  thresholdConfig Json @map("threshold_config")
+  
+  // Accounting standards
+  accountingStandards String[] @default(["US_GAAP"]) @map("accounting_standards")
+  
+  // Severity
+  severity String @default("medium") // 'low', 'medium', 'high', 'critical'
+  
+  // Status
+  isActive Boolean @default(true) @map("is_active")
+  
+  // Timestamp
+  createdAt DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  detections RiskDetection[]
+  
+  @@map("risk_rules")
+}
+
+// ============================================
+// RISK DETECTIONS
+// ============================================
+
+model RiskDetection {
+  id         String @id @default(uuid())
+  periodId   String @map("period_id")
+  riskRuleId String @map("risk_rule_id")
+  
+  // Detection result
+  isTriggered    Boolean @map("is_triggered")
+  actualValue    Decimal? @map("actual_value") @db.Decimal(20, 4)
+  thresholdValue Decimal? @map("threshold_value") @db.Decimal(20, 4)
+  
+  // Explanation
+  explanation    String?
+  recommendation String?
+  
+  // Status
+  status String @default("active") // 'active', 'resolved', 'acknowledged'
+  
+  // Timestamp
+  createdAt DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  period   FinancialPeriod @relation(fields: [periodId], references: [id], onDelete: Cascade)
+  riskRule RiskRule        @relation(fields: [riskRuleId], references: [id])
+  actions  Action[]
+  
+  @@map("risk_detections")
+}
+
+// ============================================
+// ACTIONS
+// ============================================
+
+model Action {
+  id              String  @id @default(uuid())
+  companyId       String  @map("company_id")
+  riskDetectionId String? @map("risk_detection_id")
+  
+  // Action info
+  title       String
+  description String?
+  actionType  String @default("manual") @map("action_type") // 'manual', 'auto_generated'
+  
+  // Assignment
+  assignedTo String? @map("assigned_to")
+  dueDate    DateTime? @map("due_date")
+  
+  // Status
+  status   String @default("pending") // 'pending', 'in_progress', 'completed', 'cancelled'
+  priority String @default("medium") // 'low', 'medium', 'high'
+  
+  // Completion
+  completedAt     DateTime? @map("completed_at")
+  completionNotes String?   @map("completion_notes")
+  
+  // Timestamps
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  
+  // Relations
+  company       Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  riskDetection RiskDetection? @relation(fields: [riskDetectionId], references: [id])
+  
+  @@map("actions")
+}
+
+// ============================================
+// EXTERNAL ACCESS (Investor/Lender View)
+// ============================================
+
+model ExternalAccessToken {
+  id        String @id @default(uuid())
+  companyId String @map("company_id")
+  
+  // Access info
+  token      String @unique
+  accessType String @map("access_type") // 'investor', 'lender', 'auditor'
+  
+  // Permissions
+  canViewFinancials Boolean @default(true) @map("can_view_financials")
+  canViewRisks      Boolean @default(true) @map("can_view_risks")
+  canViewActions    Boolean @default(false) @map("can_view_actions")
+  canDownload       Boolean @default(false) @map("can_download")
+  
+  // Limits
+  expiresAt    DateTime? @map("expires_at")
+  maxViews     Int?      @map("max_views")
+  currentViews Int       @default(0) @map("current_views")
+  
+  // Metadata
+  createdBy      String    @map("created_by")
+  recipientEmail String?   @map("recipient_email")
+  recipientName  String?   @map("recipient_name")
+  
+  // Timestamps
+  createdAt      DateTime  @default(now()) @map("created_at")
+  lastAccessedAt DateTime? @map("last_accessed_at")
+  
+  // Relations
+  company    Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  accessLogs AccessLog[]
+  
+  @@map("external_access_tokens")
+}
+
+// ============================================
+// ACCESS LOGS (Audit Trail)
+// ============================================
+
+model AccessLog {
+  id      String @id @default(uuid())
+  tokenId String @map("token_id")
+  
+  // Access info
+  action       String  @map("action") // 'view_dashboard', 'download_report', 'view_risk'
+  resourceType String? @map("resource_type")
+  resourceId   String? @map("resource_id")
+  
+  // Request info
+  ipAddress String? @map("ip_address")
+  userAgent String? @map("user_agent")
+  
+  // Timestamp
+  createdAt DateTime @default(now()) @map("created_at")
+  
+  // Relations
+  token ExternalAccessToken @relation(fields: [tokenId], references: [id], onDelete: Cascade)
+  
+  @@map("access_logs")
+}
